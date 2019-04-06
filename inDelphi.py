@@ -6,13 +6,18 @@ import os, pickle, copy
 import sklearn
 from scipy.stats import entropy
 
-init_flag = False
-nn_params = None
-nn2_params = None
-normalizer = None
-rate_model = None
-bp_model = None
-CELLTYPE = None
+
+class Model():
+  '''inDelph model with necessary parameters.'''
+  def __init__(self):
+    self.init_flag = False
+    self.nn_params = None
+    self.nn2_params = None
+    self.normalizer = None
+    self.rate_model = None
+    self.bp_model = None
+    self.CELLTYPE = None
+
 
 ##
 # Private NN methods
@@ -106,7 +111,7 @@ def provide_warnings(seq, cutsite):
 ##
 # Private prediction methods
 ##
-def __predict_dels(seq, cutsite):
+def __predict_dels(model, seq, cutsite):
   ################################################################
   #####
   ##### Predict MH and MH-less deletions
@@ -120,7 +125,7 @@ def __predict_dels(seq, cutsite):
   del_lens = np.array(del_len).T
   
   # Predict
-  mh_scores = __nn_function(nn_params, pred_input)
+  mh_scores = __nn_function(model.nn_params, pred_input)
   mh_scores = mh_scores.reshape(mh_scores.shape[0], 1)
   Js = del_lens.reshape(del_lens.shape[0], 1)
   unfq = np.exp(mh_scores - 0.25*Js)
@@ -131,7 +136,7 @@ def __predict_dels(seq, cutsite):
   for jdx in range(len(mh_vector)):
     if del_lens[jdx] == mh_vector[jdx]:
       dl = del_lens[jdx]
-      mhless_score = __nn_function(nn2_params, np.array(dl))
+      mhless_score = __nn_function(model.nn2_params, np.array(dl))
       mhless_score = np.exp(mhless_score - 0.25*dl)
       mask = np.concatenate([np.zeros(jdx,), np.ones(1,) * mhless_score, np.zeros(len(mh_vector) - jdx - 1,)])
       mhfull_contribution = mhfull_contribution + mask
@@ -166,7 +171,7 @@ def __predict_dels(seq, cutsite):
 
   mh_vector = np.array(mh_len)
   for dl in nonfull_dls:
-    mhless_score = __nn_function(nn2_params, np.array(dl))
+    mhless_score = __nn_function(model.nn2_params, np.array(dl))
     mhless_score = np.exp(mhless_score - 0.25*dl)
 
     unfq.append(mhless_score)
@@ -184,7 +189,7 @@ def __predict_dels(seq, cutsite):
   pred_del_df['Category'] = 'del'
   return pred_del_df, total_phi_score
 
-def __predict_ins(seq, cutsite, pred_del_df, total_phi_score):
+def __predict_ins(model, seq, cutsite, pred_del_df, total_phi_score):
   ################################################################
   #####
   ##### Predict Insertions
@@ -212,9 +217,9 @@ def __predict_ins(seq, cutsite, pred_del_df, total_phi_score):
   onebp_features = fiveohmapper[fivebase] + threeohmapper[threebase] + [precision] + [log_phi_score]
   for idx in range(len(onebp_features)):
     val = onebp_features[idx]
-    onebp_features[idx] = (val - normalizer[idx][0]) / normalizer[idx][1]
+    onebp_features[idx] = (val - model.normalizer[idx][0]) / model.normalizer[idx][1]
   onebp_features = np.array(onebp_features).reshape(1, -1)
-  rate_1bpins = float(rate_model.predict(onebp_features))
+  rate_1bpins = float(model.rate_model.predict(onebp_features))
 
   # Predict 1 bp genotype frequencies
   pred_1bpins_d = defaultdict(list)
@@ -222,17 +227,17 @@ def __predict_ins(seq, cutsite, pred_del_df, total_phi_score):
   negfourbase = seq[cutsite - 1]
   negthreebase = seq[cutsite]
 
-  if CELLTYPE in ['mESC', 'U2OS']:
-    for ins_base in bp_model[negfivebase][negfourbase][negthreebase]:
-      freq = bp_model[negfivebase][negfourbase][negthreebase][ins_base]
+  if model.CELLTYPE in ['mESC', 'U2OS']:
+    for ins_base in model.bp_model[negfivebase][negfourbase][negthreebase]:
+      freq = model.bp_model[negfivebase][negfourbase][negthreebase][ins_base]
       freq *= rate_1bpins / (1 - rate_1bpins)
       pred_1bpins_d['Category'].append('ins')
       pred_1bpins_d['Length'].append(1)
       pred_1bpins_d['Inserted Bases'].append(ins_base)
       pred_1bpins_d['Predicted frequency'].append(freq)
-  elif CELLTYPE in ['HEK293', 'HCT116', 'K562']:
-    for ins_base in bp_model[negfourbase]:
-      freq = bp_model[negfourbase][ins_base]
+  elif model.CELLTYPE in ['HEK293', 'HCT116', 'K562']:
+    for ins_base in model.bp_model[negfourbase]:
+      freq = model.bp_model[negfourbase][ins_base]
       freq *= rate_1bpins / (1 - rate_1bpins)
       pred_1bpins_d['Category'].append('ins')
       pred_1bpins_d['Length'].append(1)
@@ -303,7 +308,7 @@ def __build_stats(seq, cutsite, pred_df, total_phi_score):
 ##
 # Main public-facing prediction
 ##
-def predict(seq, cutsite):
+def predict(model, seq, cutsite):
   # Predict 1 bp insertions and all deletions (MH and MH-less)
   #
   # If no errors, returns a tuple (pred_df, stats)
@@ -311,7 +316,7 @@ def predict(seq, cutsite):
   #  
   # If errors, returns a string
   #
-  if init_flag == False:
+  if model.init_flag == False:
     init_model()
 
   # Sanitize input
@@ -323,9 +328,9 @@ def predict(seq, cutsite):
 
 
   # Make predictions
-  pred_del_df, total_phi_score = __predict_dels(seq, cutsite)
-  pred_df = __predict_ins(seq, cutsite, 
-                              pred_del_df, total_phi_score)
+  pred_del_df, total_phi_score = __predict_dels(model, seq, cutsite)
+  pred_df = __predict_ins(model, seq, cutsite, 
+                          pred_del_df, total_phi_score)
   pred_df['Predicted frequency'] *= 100
 
   # Build stats
@@ -522,11 +527,9 @@ def add_mhless_genotypes(pred_df, stats, length_cutoff = None):
 def init_model(run_iter = 'aax', 
                param_iter = 'aag', 
                celltype = 'mESC'):
-  global init_flag
-  if init_flag != False:
-    return
-
-  print('Initializing model %s/%s, %s...' % (run_iter, param_iter, celltype))
+  model = Model()
+  
+  # print('Initializing model %s/%s, %s...' % (run_iter, param_iter, celltype))
 
   model_dir = os.path.dirname(os.path.realpath(__file__))
   if sklearn.__version__ == '0.18.1':
@@ -543,29 +546,21 @@ def init_model(run_iter = 'aax',
     else:
       return pickle.load(f, encoding = 'latin1')
 
-  global CELLTYPE
-  CELLTYPE = celltype
-
-  global nn_params
-  global nn2_params
+  model.CELLTYPE = celltype
   with open('%s/%s_%s_nn.pkl' % (model_dir, run_iter, param_iter), 'rb') as f:
     # load in python3.6 a pickle that was dumped from python2.7
-    nn_params = version_sensitive_pickle_load(f)
+    model.nn_params = version_sensitive_pickle_load(f)
   with open('%s/%s_%s_nn2.pkl' % (model_dir, run_iter, param_iter), 'rb') as f:
-    nn2_params = version_sensitive_pickle_load(f)
+    model.nn2_params = version_sensitive_pickle_load(f)
 
-  global normalizer
-  global rate_model
-  global bp_model
   with open('%s/bp_model_%s.pkl' % (model_dir, celltype), 'rb') as f:
-    bp_model = version_sensitive_pickle_load(f)
+    model.bp_model = version_sensitive_pickle_load(f)
   with open('%s/rate_model_%s.pkl' % (model_dir, celltype), 'rb') as f:
-    rate_model = version_sensitive_pickle_load(f)
+    model.rate_model = version_sensitive_pickle_load(f)
   with open('%s/Normalizer_%s.pkl' % (model_dir, celltype), 'rb') as f:
-    normalizer = version_sensitive_pickle_load(f)
+    model.normalizer = version_sensitive_pickle_load(f)
 
-  init_flag = True
+  model.init_flag = True
 
-  print('Done')
-  return
+  return model
 
